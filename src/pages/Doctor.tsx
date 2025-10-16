@@ -19,7 +19,7 @@ type PatientMap = Record<
 >;
 
 export default function Doctor() {
-  const { user } = useAuth();
+  const { token, user, logout } = useAuth();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Consultation[]>([]);
   const [patients, setPatients] = useState<PatientMap>({});
@@ -215,6 +215,24 @@ export default function Doctor() {
           {toast}
         </div>
       )}
+return (
+  <div className="space-y-6">
+    {/* tiny toast */}
+    {toast && (...existing code...)}
+
+    {/* ✅ Logout Button (Top Right) */}
+    <div className="flex justify-end mb-4">
+      <span className="text-sm text-gray-600 mr-3">{user?.email}</span>
+      <button
+        onClick={logout}
+        className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded"
+      >
+        Logout
+      </button>
+    </div>
+
+    {/* Header */}
+    <div className="flex items-center justify-between">
 
       {/* Header */}
       <div className="flex items-center justify-between">

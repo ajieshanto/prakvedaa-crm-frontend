@@ -4,7 +4,7 @@ import { useAuth } from "../auth";
 import { toast } from "react-toastify";
 
 export default function Sales() {
-  const { token } = useAuth();
+  const { token, user, logout } = useAuth();
   const [patients, setPatients] = useState<any[]>([]);
   const [doctors, setDoctors] = useState<any[]>([]);
   const [form, setForm] = useState({ name: "", age: "", contact: "", notes: "" });
@@ -65,15 +65,27 @@ export default function Sales() {
   }
 
   return (
-    <div
-      className="max-w-[78%] ml-auto mr-12 rounded-2xl bg-white p-8 mt-6"
-      style={{
-        border: "4px solid #3B82F6",
-        boxShadow: "0 20px 45px rgba(0,0,0,0.12)",
-        transform: "translateX(32px)",
-      }}
-    >
-      <h2 className="text-xl font-bold mb-4">Sales Dashboard</h2>
+  <div
+    className="max-w-[78%] ml-auto mr-12 rounded-2xl bg-white p-8 mt-6"
+    style={{
+      border: "4px solid #3B82F6",
+      boxShadow: "0 20px 45px rgba(0,0,0,0.12)",
+      transform: "translateX(32px)",
+    }}
+  >
+    {/* ✅ Logout Bar */}
+    <div className="flex justify-end mb-4">
+      <span className="text-sm text-gray-600 mr-3">{user?.email}</span>
+      <button
+        onClick={logout}
+        className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded"
+      >
+        Logout
+      </button>
+    </div>
+
+    <h2 className="text-xl font-bold mb-4">Sales Dashboard</h2>
+
 
       {/* --- Create Patient --- */}
       <div className="border border-gray-300 bg-gray-50 p-4 rounded-md mb-6">
