@@ -2,7 +2,7 @@ import { Outlet } from "react-router-dom";
 import { useAuth } from "./auth";
 
 export default function App() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth(); // ✅ Extract user here
 
   return (
     <div className="flex min-h-screen bg-gray-100">
@@ -24,19 +24,18 @@ export default function App() {
       <div className="flex-1 flex flex-col">
         {/* 🔹 Top Header Bar */}
         <header className="flex justify-end items-center bg-white border-b p-4 shadow-sm">
-  {localStorage.getItem("token") ? (
-    <div className="flex items-center gap-4">
-      <span className="text-sm text-gray-600">{user?.email || "Logged In"}</span>
-      <button
-        onClick={logout}
-        className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition"
-      >
-        Logout
-      </button>
-    </div>
-  ) : null}
-</header>
-
+          {user && (
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-gray-600">{user.email}</span>
+              <button
+                onClick={logout}
+                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition"
+              >
+                Logout
+              </button>
+            </div>
+          )}
+        </header>
 
         {/* Content Wrapper */}
         <main className="p-8">
