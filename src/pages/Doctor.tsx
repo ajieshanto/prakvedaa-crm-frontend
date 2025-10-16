@@ -1,5 +1,5 @@
 // src/pages/Doctor.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../lib/api";
 import { useAuth } from "../auth";
 

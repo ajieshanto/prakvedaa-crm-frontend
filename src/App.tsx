@@ -2,7 +2,9 @@ import { Outlet } from "react-router-dom";
 import { useAuth } from "./auth";
 
 export default function App() {
-  const { logout, token, user } = useAuth();
+  const { logout, token } = useAuth();
+
+
 
   return (
     <div className="flex min-h-screen bg-gray-100">
