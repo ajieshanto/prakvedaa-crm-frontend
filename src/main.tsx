@@ -7,7 +7,8 @@ import "./reset.css";
 import Login from "./pages/Login";
 import Sales from "./pages/Sales";
 import Doctor from "./pages/Doctor";
-
+import { ToastContainer } from "react-toastify"; // ✅ Add this line
+import "react-toastify/dist/ReactToastify.css"; // ✅ Add this line too
 
 function Guard({ role, children }: { role: "sales" | "doctor"; children: React.ReactNode }) {
   const { user } = useAuth();
@@ -47,6 +48,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+
+        {/* ✅ Toast Container (global notifications) */}
+        <ToastContainer position="top-right" autoClose={2000} />
       </BrowserRouter>
     </AuthProvider>
   </React.StrictMode>

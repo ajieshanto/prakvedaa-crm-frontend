@@ -3,325 +3,351 @@ import React, { useEffect, useMemo, useState } from "react";
 import api from "../lib/api";
 import { useAuth } from "../auth";
 
-type Role = "sales" | "doctor";
-type User = { email: string; role: Role };
-
-type Patient = {
-  id: number;
-  name: string;
-  age?: number;
-  contact?: string;
-  notes?: string;
-  created_by: string;
-  assigned_doctor_email?: string | null;
-};
-
 type Consultation = {
   id: number;
   patient_id: number;
+  scheduled_at: string | null;
   video_url: string;
-  scheduled_at?: string | null;
   created_by: string;
   status?: "pending" | "completed";
   doctor_notes?: string | null;
 };
 
+type PatientMap = Record<
+  number,
+  { name: string; contact?: string | null; assigned_doctor_email?: string | null }
+>;
+
 export default function Doctor() {
-  const { user, logout } = useAuth() as { user: User | null; logout: () => void };
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<Consultation[]>([]);
+  const [patients, setPatients] = useState<PatientMap>({});
+  const [noteDraft, setNoteDraft] = useState<Record<number, string>>({});
+  const [statusDraft, setStatusDraft] = useState<Record<number, "pending" | "completed">>({});
+  const [toast, setToast] = useState<string | null>(null);
 
-  const [patients, setPatients] = useState<Patient[]>([]);
-  const [consultations, setConsultations] = useState<Consultation[]>([]);
-  const [openPanelId, setOpenPanelId] = useState<number | null>(null);
-  const [notesInput, setNotesInput] = useState<string>("");
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 1800);
+  }
 
-  // toast
-  const [toast, setToast] = useState<{ show: boolean; text: string }>({
-    show: false,
-    text: "",
-  });
-  const showToast = (text: string) => {
-    setToast({ show: true, text });
-    setTimeout(() => setToast({ show: false, text: "" }), 2500);
-  };
-
-  const loadAll = async () => {
+  async function loadAll() {
     try {
-      // Doctor: backend already filters only assigned consultations
-      const [p, c] = await Promise.all([
+      setLoading(true);
+      // doctor sees only assigned consultations
+      const [consRes, patsRes] = await Promise.all([
+        api.get<Consultation[]>("/consultations/list"),
         api.get("/patients/list"),
-        api.get("/consultations/list"),
       ]);
-      setPatients(p.data);
-      setConsultations(c.data);
-    } catch {
-      // no-op
+
+      const patientMap: PatientMap = {};
+      (patsRes.data as any[]).forEach((p) => {
+        patientMap[p.id] = {
+          name: p.name,
+          contact: p.contact,
+          assigned_doctor_email: p.assigned_doctor_email,
+        };
+      });
+
+      setPatients(patientMap);
+      setRows(consRes.data);
+
+      // seed drafts from server values
+      const nd: Record<number, string> = {};
+      const sd: Record<number, "pending" | "completed"> = {};
+      consRes.data.forEach((c) => {
+        nd[c.id] = c.doctor_notes ?? "";
+        sd[c.id] = (c.status ?? "pending") as "pending" | "completed";
+      });
+      setNoteDraft(nd);
+      setStatusDraft(sd);
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
     loadAll();
-    const t = setInterval(loadAll, 10000);
-    return () => clearInterval(t);
   }, []);
 
-  const patientById = useMemo(() => {
-    const m: Record<number, Patient> = {};
-    patients.forEach((p) => (m[p.id] = p));
-    return m;
-  }, [patients]);
+  async function updateConsultation(c: Consultation) {
+    const body: any = {};
+    if (noteDraft[c.id] !== undefined) body.notes = noteDraft[c.id];
+    if (statusDraft[c.id] !== undefined) body.status = statusDraft[c.id];
 
-  const renderStatusBadge = (status?: string) => {
-    const s = (status || "pending").toLowerCase();
-    if (s === "completed") {
-      return <span className="px-2 py-1 rounded text-xs bg-green-200 text-green-800">Completed</span>;
-    }
-    return <span className="px-2 py-1 rounded text-xs bg-yellow-200 text-yellow-800">Pending</span>;
-  };
-
-  const openUpdatePanel = (c: Consultation) => {
-    setOpenPanelId((prev) => (prev === c.id ? null : c.id));
-    setNotesInput(c.doctor_notes || "");
-  };
-
-  const patchConsultation = async (c: Consultation, markDone: boolean) => {
-    const body: any = {
-      consultation_id: c.id,
-      notes: notesInput ?? "",
-    };
-    if (markDone) body.status = "completed";
     await api.patch(`/consultations/update`, body, {
       params: { consultation_id: c.id },
     });
-    showToast("✅ Consultation Updated Successfully");
-    setOpenPanelId(null);
-    setNotesInput("");
+
+    showToast("Saved ✅");
     await loadAll();
-  };
+  }
 
-  const printSummary = (c: Consultation) => {
-    const p = patientById[c.patient_id];
-    const when = c.scheduled_at ? new Date(c.scheduled_at).toLocaleString() : "—";
-    const notes = (c.doctor_notes || "").trim() || "—";
-    const phone = p?.contact || "—";
-    const doc = window.open("", "_blank", "width=800,height=900");
-    if (!doc) return;
+  async function openWhatsApp(c: Consultation) {
+    // Ask backend to build the wa.me link (handles phone source)
+    const { data } = await api.post("/consultations/whatsapp-link", {
+      consultation_id: c.id,
+    });
+    const url = (data as any).wa_link as string;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 
-    doc.document.write(`
-      <html>
-        <head>
-          <title>Consultation #${c.id} — Summary</title>
-          <style>
-            body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; padding: 24px; color: #111827; }
-            .title { font-weight: 800; font-size: 22px; margin-bottom: 4px; display:flex; gap:8px; align-items:center; }
-            .tagline { color: #6B7280; font-style: italic; margin-bottom: 16px; }
-            .card { border: 2px solid #3B82F6; border-radius: 16px; padding: 20px; }
-            .row { display: grid; grid-template-columns: 180px 1fr; gap: 10px; margin: 8px 0; }
-            .label { color: #374151; }
-            .badge { display:inline-block; padding:4px 10px; border-radius:9999px; font-size:12px; }
-            .badge-pending { background:#FEF3C7; color:#92400E; }
-            .badge-completed { background:#DCFCE7; color:#166534; }
-            .footer { margin-top: 16px; color: #6B7280; font-size: 12px; }
-            .link { color: #2563EB; text-decoration: none; }
-            .link:hover { text-decoration: underline; }
-          </style>
-        </head>
-        <body onload="window.print(); setTimeout(() => window.close(), 200);">
-          <div class="title">🩺 PRAKVEDAA CRM</div>
-          <div class="tagline">“Healing through seamless conversations — Prakvedaa”</div>
-          <div class="card">
-            <div class="row"><div class="label">Consultation ID</div><div>#${c.id}</div></div>
-            <div class="row"><div class="label">Patient</div><div>${p?.name ?? "—"}</div></div>
-            <div class="row"><div class="label">Scheduled</div><div>${when}</div></div>
-            <div class="row"><div class="label">Doctor</div><div>${user?.email ?? "—"}</div></div>
-            <div class="row"><div class="label">Video Link</div><div><a class="link" href="${c.video_url}">${c.video_url}</a></div></div>
-            <div class="row"><div class="label">Phone</div><div>${phone}</div></div>
-            <div class="row"><div class="label">Status</div>
-              <div><span class="badge ${c.status === "completed" ? "badge-completed" : "badge-pending"}">${c.status || "pending"}</span></div>
-            </div>
-            <div class="row"><div class="label">Doctor Notes</div><div><pre style="white-space: pre-wrap; font-family: inherit; margin:0;">${notes}</pre></div></div>
-          </div>
-          <div class="footer">Printed on ${new Date().toLocaleString()}</div>
-        </body>
-      </html>
-    `);
-    doc.document.close();
-  };
+  function printConsultation(c: Consultation) {
+    const p = patients[c.patient_id];
+    const when = c.scheduled_at ? new Date(c.scheduled_at).toLocaleString() : "Now";
+    const today = new Date().toLocaleDateString();
+
+    // Only allow print when completed and notes exist
+    if ((c.status ?? "pending") !== "completed" || !(c.doctor_notes && c.doctor_notes.trim())) {
+      showToast("Complete the consultation and add notes to print.");
+      return;
+    }
+
+    const html = `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Prescription — ${p?.name ?? "Patient"}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --blue:#2563eb;
+      --ink:#0f172a;
+      --muted:#64748b;
+      --border:#e2e8f0;
+    }
+    body { margin:0; background:#f8fafc; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; color:var(--ink); }
+    .sheet {
+      max-width: 760px; margin: 40px auto; background:white; padding: 32px 36px;
+      border-radius: 16px; border: 2px solid var(--blue);
+      box-shadow: 0 20px 50px rgba(37,99,235,.15);
+    }
+    .hdr { display:flex; align-items:center; gap:16px; border-bottom:1px dashed var(--border); padding-bottom:14px; margin-bottom:18px; }
+    .logo { width:56px; height:56px; border-radius:12px; background:linear-gradient(135deg,#1d4ed8 0%,#60a5fa 100%); display:grid; place-items:center; color:white; font-weight:800; font-size:20px; }
+    .title { font-size:20px; font-weight:800; letter-spacing:.4px; }
+    .tag { font-size:12px; color:var(--muted); margin-top:2px; }
+    .row { display:flex; gap:16px; flex-wrap:wrap; }
+    .box { flex:1 1 240px; border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+    .label { font-size:12px; color:var(--muted); }
+    .val { font-weight:700; margin-top:2px; }
+    .section { margin-top:18px; }
+    .notes {
+      white-space: pre-wrap; line-height:1.6; border:1px dashed var(--border);
+      padding:16px; border-radius:12px; background:#f8fafc;
+    }
+    .footer { margin-top:28px; display:flex; justify-content:space-between; font-size:12px; color:var(--muted); }
+    @media print {
+      body { background:white; }
+      .sheet { margin:0; max-width:100%; box-shadow:none; border-width:1px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="hdr">
+      <div class="logo">PV</div>
+      <div>
+        <div class="title">Prakvedaa Tele-Consultation</div>
+        <div class="tag">Empowering Digital Healthcare</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="box">
+        <div class="label">Patient</div>
+        <div class="val">${p?.name ?? "—"}</div>
+      </div>
+      <div class="box">
+        <div class="label">Scheduled</div>
+        <div class="val">${when}</div>
+      </div>
+      <div class="box">
+        <div class="label">Doctor</div>
+        <div class="val">${user?.email ?? "—"}</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="label" style="margin-bottom:8px;">Doctor Notes / Prescription</div>
+      <div class="notes">${(c.doctor_notes || "").replace(/</g, "&lt;")}</div>
+    </div>
+
+    <div class="footer">
+      <div>Generated: ${today}</div>
+      <div>Video: ${c.video_url}</div>
+    </div>
+  </div>
+  <script>window.print()</script>
+</body>
+</html>
+    `.trim();
+
+    const w = window.open("", "_blank", "noopener,noreferrer");
+    if (!w) {
+      showToast("Popup blocked — allow popups to print.");
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  }
+
+  const enriched = useMemo(() => {
+    return rows.map((c) => ({
+      ...c,
+      patientName: patients[c.patient_id]?.name ?? `#${c.patient_id}`,
+    }));
+  }, [rows, patients]);
+
+  if (loading) {
+    return (
+      <div className="text-center text-gray-500 p-8">Loading consultations…</div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      {/* Brand header */}
-      <div className="text-center mb-6">
-        <div className="flex items-center justify-center gap-2 text-2xl font-bold text-gray-700">
-          <span className="text-3xl">🩺</span> PRAKVEDAA CRM
+    <div className="space-y-6">
+      {/* tiny toast */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 bg-black/80 text-white text-sm px-3 py-2 rounded">
+          {toast}
         </div>
-        <p className="text-gray-500 text-sm mt-1 italic">
-          “Healing through seamless conversations — Prakvedaa”
-        </p>
+      )}
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold">Doctor Dashboard</h2>
+          <p className="text-sm text-gray-500">
+            Assigned consultations for <span className="font-semibold">{user?.email}</span>
+          </p>
+        </div>
       </div>
 
-      {/* Right aligned bordered panel */}
-      <div
-        className="w-[75%] ml-auto mr-12 rounded-2xl bg-white p-8 mt-6 space-y-6"
-        style={{
-          border: "4px solid #3B82F6",
-          boxShadow: "0 20px 45px rgba(0,0,0,0.12)",
-          transform: "translateX(24px)",
-        }}
-      >
-        {/* Header with logout */}
-        <div className="flex justify-between items-center">
-          <h2 className="text-xl font-semibold text-gray-700">Doctor Dashboard</h2>
-          <button
-            onClick={logout}
-            className="text-sm px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-          >
-            Logout
-          </button>
-        </div>
-
-        {/* Consultations (assigned to this doctor) */}
-        <div className="border p-4 rounded-lg bg-gray-50">
-          <h3 className="font-semibold mb-3">📋 My Consultations</h3>
-          <table className="w-full border">
+      {/* Table Card */}
+      <div className="rounded-2xl bg-white p-6 shadow-xl ring-1 ring-blue-500/20">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
             <thead>
-              <tr className="bg-gray-200 text-left">
-                <th className="p-2">ID</th>
-                <th className="p-2">Patient</th>
-                <th className="p-2">Scheduled</th>
-                <th className="p-2">Status</th>
-                <th className="p-2">Join</th>
-                <th className="p-2">WhatsApp</th>
-                <th className="p-2">Print</th>
-                <th className="p-2">Update</th>
+              <tr className="text-left text-gray-600 border-b">
+                <th className="py-3 pr-4">ID</th>
+                <th className="py-3 pr-4">Patient</th>
+                <th className="py-3 pr-4">Scheduled</th>
+                <th className="py-3 pr-4">Status</th>
+                <th className="py-3 pr-4">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {consultations.map((c) => {
-                const p = patientById[c.patient_id];
-                const when = c.scheduled_at ? new Date(c.scheduled_at).toLocaleString() : "—";
-                const phone =
-                  p?.contact?.replace(/\s+/g, "")?.replace(/^\+/, "") || "";
-                const waLink = phone
-                  ? `https://wa.me/${phone}?text=${encodeURIComponent(
-                      `Hello ${p?.name || ""}, your video consultation link: ${c.video_url}${
-                        c.scheduled_at ? ` at ${when}` : ""
-                      }`
-                    )}`
-                  : undefined;
-
-                const isOpen = openPanelId === c.id;
-
+              {enriched.map((c) => {
+                const status = (c.status ?? "pending") as "pending" | "completed";
+                const scheduledStr = c.scheduled_at
+                  ? new Date(c.scheduled_at).toLocaleString()
+                  : "—";
                 return (
-                  <React.Fragment key={c.id}>
-                    <tr className="border-t align-top">
-                      <td className="p-2">{c.id}</td>
-                      <td className="p-2">
-                        <div className="font-medium">{p?.name || "—"}</div>
-                        <div className="text-xs text-gray-500">{p?.contact || "—"}</div>
-                      </td>
-                      <td className="p-2">{when}</td>
-                      <td className="p-2">{renderStatusBadge(c.status)}</td>
-                      <td className="p-2">
-                        <a
-                          href={c.video_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 hover:underline"
+                  <tr key={c.id} className="border-b last:border-b-0">
+                    <td className="py-3 pr-4">{c.id}</td>
+                    <td className="py-3 pr-4 font-medium">{c.patientName}</td>
+                    <td className="py-3 pr-4">{scheduledStr}</td>
+                    <td className="py-3 pr-4">
+                      <span
+                        className={
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs " +
+                          (status === "completed"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-amber-100 text-amber-700")
+                        }
+                      >
+                        {status === "completed" ? "Completed" : "Pending"}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => window.open(c.video_url, "_blank", "noopener,noreferrer")}
+                          className="px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700"
                         >
                           Join
-                        </a>
-                      </td>
-                      <td className="p-2">
-                        {waLink ? (
-                          <a
-                            href={waLink}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-green-600 hover:underline"
-                          >
-                            WhatsApp
-                          </a>
-                        ) : (
-                          <span className="text-gray-400 text-sm">No phone</span>
-                        )}
-                      </td>
-                      <td className="p-2">
-                        <button
-                          className="text-sm px-3 py-1 rounded bg-gray-800 text-white hover:bg-black"
-                          onClick={() => printSummary(c)}
-                        >
-                          🖨 Print
                         </button>
-                      </td>
-                      <td className="p-2">
                         <button
-                          className="text-sm px-3 py-1 rounded bg-purple-600 text-white hover:bg-purple-700"
-                          onClick={() => openUpdatePanel(c)}
+                          onClick={() => openWhatsApp(c)}
+                          className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700"
                         >
-                          {isOpen ? "Close" : "Update"}
+                          WhatsApp
                         </button>
-                      </td>
-                    </tr>
+                        <button
+                          onClick={() => printConsultation(c)}
+                          className="px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50"
+                          disabled={status !== "completed" || !(c.doctor_notes && c.doctor_notes.trim())}
+                          title={
+                            status !== "completed"
+                              ? "Complete consultation to print"
+                              : !(c.doctor_notes && c.doctor_notes.trim())
+                              ? "Add notes to print"
+                              : "Print prescription"
+                          }
+                        >
+                          Print
+                        </button>
+                      </div>
 
-                    {/* Expandable update panel */}
-                    {isOpen && (
-                      <tr>
-                        <td colSpan={8} className="bg-white">
-                          <div className="p-4 border rounded mt-2">
-                            <div className="font-semibold mb-2">📝 Doctor Notes</div>
-                            <textarea
-                              className="w-full border rounded p-2 h-28"
-                              placeholder="Write your notes / prescription..."
-                              value={notesInput}
-                              onChange={(e) => setNotesInput(e.target.value)}
-                            />
-                            <div className="mt-3 flex gap-2">
-                              <button
-                                className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
-                                onClick={() => patchConsultation(c, false)}
-                              >
-                                Save Notes
-                              </button>
-                              <button
-                                className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700"
-                                onClick={() => patchConsultation(c, true)}
-                              >
-                                Save & Mark Completed
-                              </button>
-                              <button
-                                className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300"
-                                onClick={() => setOpenPanelId(null)}
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
+                      {/* Editor row */}
+                      <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <textarea
+                          className="col-span-2 w-full rounded border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          rows={3}
+                          placeholder="Doctor notes / prescription…"
+                          value={noteDraft[c.id] ?? ""}
+                          onChange={(e) =>
+                            setNoteDraft((s) => ({ ...s, [c.id]: e.target.value }))
+                          }
+                        />
+                        <div className="flex flex-col gap-2">
+                          <select
+                            className="rounded border border-gray-300 p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            value={statusDraft[c.id] ?? (c.status ?? "pending")}
+                            onChange={(e) =>
+                              setStatusDraft((s) => ({
+                                ...s,
+                                [c.id]: e.target.value as "pending" | "completed",
+                              }))
+                            }
+                          >
+                            <option value="pending">Pending</option>
+                            <option value="completed">Completed</option>
+                          </select>
+                          <button
+                            onClick={() => updateConsultation(c)}
+                            className="px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Read-only show when completed */}
+                      {status === "completed" && c.doctor_notes && c.doctor_notes.trim() && (
+                        <div className="mt-3 text-gray-700 text-sm">
+                          <span className="font-semibold">Saved Notes:</span>{" "}
+                          <span className="whitespace-pre-wrap">{c.doctor_notes}</span>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
                 );
               })}
-              {consultations.length === 0 && (
+              {enriched.length === 0 && (
                 <tr>
-                  <td className="p-4 text-center text-gray-500" colSpan={8}>
-                    No consultations assigned.
+                  <td colSpan={5} className="py-8 text-center text-gray-500">
+                    No consultations yet.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-
-        <div className="text-xs text-gray-400">Auto-refresh is enabled (every 10 seconds).</div>
       </div>
-
-      {/* ✅ Toast (top-right) */}
-      {toast.show && (
-        <div className="fixed top-6 right-6 bg-green-600 text-white px-4 py-3 rounded shadow-lg transition-opacity">
-          {toast.text}
-        </div>
-      )}
     </div>
   );
 }
